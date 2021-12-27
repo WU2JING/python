@@ -1,0 +1,279 @@
+import numpy as np
+from abaqus import *
+from abaqusConstants import *
+from scipy.spatial import *
+import part
+import random
+vertex=[]
+face=[]
+poly=[]
+num_ver= 13886
+num_face=16080
+num_poly=part_num=2197
+length=45.5
+#part_num: the figure was divided to 300 parts
+part1_num=1098
+times=1
+a1='**vertex'
+a2='**face'
+a3='**polyhedron'
+V=0
+F=0
+P=0
+num=0
+while True:
+    data=data_file.readline()
+    if len(data)==0:
+        break
+    if a1 in data:
+        V+=1
+        continue
+    if a2 in data:
+        F+=1
+        continue
+    if a3 in data:
+        P+=1
+        continue
+    if V==1 and F==0 and len(vertex)<num_ver and len(data.split())>1:
+        temp=[]
+        for i in range(1,len(data.split())-1):
+            temp.append((float(data.split()[i])))
+        if len(temp) >0 :
+            vertex.append(tuple(temp))
+    if V==1 and F==1 and len(face)<num_face and len(data.split())>1:
+        temp=[]
+        if num%4==0:
+            for i in range(2,len(data.split())):                                                     
+                 temp.append((int(data.split()[i])-1))                           
+            if len(temp) > 0:                                                          
+                 face.append(temp)
+        num+=1
+    if V==1 and F==1 and P==1 and len(poly)<num_poly and len(data.split())>1:
+        temp=[]
+        for i in range(2,len(data.split())):
+            temp.append(abs(int(data.split()[i]))-1)
+        if len(temp) >0 :
+            poly.append(tuple(temp)) 
+data_file.close()
+face_points=[]
+for ver_ord in np.array(face):
+    ver_ord = np.array(ver_ord)
+    temp = []
+    for j in (ver_ord):
+        temp.append(tuple(vertex[j]))
+    temp.append(np.array(vertex[ver_ord[0]])) 
+    face_points.append(temp)
+      
+myModel = mdb.models['Model-1']
+
+vector=[[] for i in range(part_num)]
+
+for q in range(1,part_num+1):
+    myPart = myModel.Part(name='Part'+str(q), dimensionality=THREE_D, type=DEFORMABLE_BODY)
+    all_data=[]
+    for k in range((q-1)*times,q*times):
+        print(k)
+        for i in poly[k]:
+            if i not in all_data:
+                all_data.append(i)
+                wire = myPart.WirePolyLine(mergeType=SEPARATE, meshable=ON, points=(face_points[i]))
+                face_edge = myPart.getFeatureEdges(name=wire.name)
+                myPart.CoverEdges(edgeList = face_edge, tryAnalytical=True)
+    faces1 = myPart.faces[:]
+    myPart.AddCells(faceList = faces1)
+    for j in range(len(faces1)):
+        vector[q-1].append(list(myPart.getCentroid(faces=faces1[j:j+1],relativeAccuracy=0.001)))
+        for i in range(len(vector[q-1][-1])):
+            vector[q-1][-1][i]=round(vector[q-1][-1][i],3)
+            
+
+mdb.models['Model-1'].rootAssembly.DatumCsysByDefault(CARTESIAN)    		
+for i in range(1,part_num+1):
+    mdb.models['Model-1'].rootAssembly.Instance(dependent=ON, name='Part'+str(i)+'-1', part=
+    mdb.models['Model-1'].parts['Part'+str(i)])
+
+PHASE_1=[]
+PHASE_2=[]
+for i in range(1,part1_num+1):
+    PHASE_1.append(mdb.models['Model-1'].rootAssembly.instances['Part'+str(i)+'-1'])
+
+for i in range(part1_num+1,part_num+1):
+    PHASE_2.append(mdb.models['Model-1'].rootAssembly.instances['Part'+str(i)+'-1'])
+
+    
+mdb.models['Model-1'].rootAssembly.InstanceFromBooleanMerge(domain=GEOMETRY, 
+    instances=(PHASE_1), 
+    keepIntersections=ON, name='PHASE-1', originalInstances=SUPPRESS)	
+mdb.models['Model-1'].rootAssembly.InstanceFromBooleanMerge(domain=GEOMETRY, 
+    instances=(PHASE_2), 
+    keepIntersections=ON, name='PHASE-2', originalInstances=SUPPRESS)	
+
+for i in range(1,part_num+1):
+    del mdb.models['Model-1'].rootAssembly.features['Part'+str(i)+'-1'] 
+faces1 = mdb.models['Model-1'].parts['PHASE-1'].faces[:]     
+faces2 = mdb.models['Model-1'].parts['PHASE-2'].faces[:]
+	
+vector_1=[]
+vector_2=[]
+for j in range(len(faces1)):
+    vector_1.append(list(mdb.models['Model-1'].parts['PHASE-1'].getCentroid(faces=faces1[j:j+1],relativeAccuracy=0.001)))
+    for i in range(len(vector_1[-1])):
+        vector_1[-1][i]=round(vector_1[-1][i],3) 
+for j in range(len(faces2)):
+    vector_2.append(list(mdb.models['Model-1'].parts['PHASE-2'].getCentroid(faces=faces2[j:j+1],relativeAccuracy=0.001)))
+    for i in range(len(vector_2[-1])):
+        vector_2[-1][i]=round(vector_2[-1][i],3)
+
+mdb.models['Model-1'].HeatTransferStep(amplitude=RAMP, initialInc=0.1, 
+    maxNumInc=100, name='Step-1', previous='Initial', response=STEADY_STATE)
+mdb.models['Model-1'].ContactProperty('IntProp-1')
+mdb.models['Model-1'].interactionProperties['IntProp-1'].ThermalConductance(
+    clearanceDepTable=((2.642, 0.0), (0.0, 0.001)), clearanceDependency=
+    ON, definition=TABULAR, dependenciesC=0, massFlowRateDependencyC=OFF, 
+    pressureDependency=OFF, temperatureDependencyC=OFF)
+res=0
+
+for i in range(len(vector_1)):
+    for j in range(len(vector_2)):
+        if vector_1[i]==vector_2[j]:
+            res+=1
+            mdb.models['Model-1'].parts['PHASE-1'].Surface(side1Faces=faces1[i:i+1], name='Surf-'+str(res))
+            mdb.models['Model-1'].parts['PHASE-2'].Surface(side1Faces=faces2[j:j+1], name='Surf-'+str(res))
+            Sname='Surf-'+str(res)
+            mdb.models['Model-1'].SurfaceToSurfaceContactStd(adjustMethod=NONE, 
+						clearanceRegion=None, createStepName='Step-1', datumAxis=None, 
+						initialClearance=OMIT, interactionProperty='IntProp-1', 
+						master=mdb.models['Model-1'].rootAssembly.instances['PHASE-2-1'].surfaces[Sname], 
+						name='Int-'+str(res), 
+						slave=mdb.models['Model-1'].rootAssembly.instances['PHASE-1-1'].surfaces[Sname],sliding=FINITE, thickness=ON) 
+
+
+for i in range(6):
+    mdb.models['Model-1'].Material(name='BAs'+str(i))
+    mdb.models['Model-1'].materials['BAs'+str(i)].Conductivity(table=((1126.027, 0.0, 
+    1126.027, 0.0, 0.0, 1126.027), ), type=ANISOTROPIC) 
+for i in range(6):
+    mdb.models['Model-1'].HomogeneousSolidSection(material='BAs'+str(i), name='BAs'+str(i), 
+    thickness=None)
+
+
+mdb.models['Model-1'].Material(name='GaN0')
+mdb.models['Model-1'].materials['GaN0'].Conductivity(table=((332.6028561, 0.0, 
+    332.6028561, 0.0, 0.0, 275.2910422), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN0', name='GaN0', 
+    thickness=None)	
+mdb.models['Model-1'].Material(name='GaN1')
+mdb.models['Model-1'].materials['GaN1'].Conductivity(table=((332.6028561, 0.0, 
+    332.6028561, 0.0, 0.0, 275.2910422), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN1', name='GaN1', 
+    thickness=None)	
+mdb.models['Model-1'].Material(name='GaN2')
+mdb.models['Model-1'].materials['GaN2'].Conductivity(table=((275.2910422, 0.0, 
+    332.6028561, 0.0, 0.0, 332.6028561), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN2', name='GaN2', 
+    thickness=None)
+mdb.models['Model-1'].Material(name='GaN3')
+mdb.models['Model-1'].materials['GaN3'].Conductivity(table=((275.2910422, 0.0, 
+    332.6028561, 0.0, 0.0, 332.6028561), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN3', name='GaN3', 
+    thickness=None) 
+
+mdb.models['Model-1'].Material(name='GaN4')
+mdb.models['Model-1'].materials['GaN4'].Conductivity(table=((332.6028561, 0.0, 
+    275.2910422, 0.0, 0.0, 332.6028561), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN4', name='GaN4', 
+    thickness=None)
+mdb.models['Model-1'].Material(name='GaN5')
+mdb.models['Model-1'].materials['GaN5'].Conductivity(table=((332.6028561, 0.0, 
+    275.2910422, 0.0, 0.0, 332.6028561), ), type=ANISOTROPIC)   
+mdb.models['Model-1'].HomogeneousSolidSection(material='GaN5', name='GaN5', 
+    thickness=None)     
+    
+    
+cells_1 = mdb.models['Model-1'].parts['PHASE-1'].cells[:]     
+cells_2 = mdb.models['Model-1'].parts['PHASE-2'].cells[:]
+
+for i in range(len(cells_1)):
+    randNum = random.randint(0, 5)
+    mdb.models['Model-1'].parts['PHASE-1'].Set(cells=cells_1[i:i+1], name='SetGa-'+str(i))
+    mdb.models['Model-1'].parts['PHASE-1'].SectionAssignment(offset=0.0, 
+    offsetField='', offsetType=MIDDLE_SURFACE, region=
+    mdb.models['Model-1'].parts['PHASE-1'].sets['SetGa-'+str(i)], sectionName='GaN'+str(randNum), 
+    thicknessAssignment=FROM_SECTION)  
+
+for i in range(len(cells_2)):
+    randNum = random.randint(0, 5)
+    mdb.models['Model-1'].parts['PHASE-2'].Set(cells=cells_2[i:i+1], name='SetB-'+str(i))
+    mdb.models['Model-1'].parts['PHASE-2'].SectionAssignment(offset=0.0, 
+    offsetField='', offsetType=MIDDLE_SURFACE, region=
+    mdb.models['Model-1'].parts['PHASE-2'].sets['SetB-'+str(i)], sectionName='BAs'+str(randNum), 
+    thicknessAssignment=FROM_SECTION)  
+
+faces1 = mdb.models['Model-1'].rootAssembly.instances['PHASE-1-1'].faces[:]   
+faces2 = mdb.models['Model-1'].rootAssembly.instances['PHASE-2-1'].faces[:]
+surface0_1=[]
+surface5_1=[]
+surface0_2=[]
+surface5_2=[]
+for i in range(len(faces1)):
+    x=faces1[i].getCentroid()
+    y=faces1[i].getNormal()
+    if x[0][0]==0:
+        surface0_1.append(i)
+        print(x,y)
+    if x[0][0]==length:
+        print(x,y)
+        surface5_1.append(i)  
+print('*******************************************************************************************')
+for i in range(len(faces2)):
+    x=faces2[i].getCentroid()
+    y=faces2[i].getNormal()
+    if x[0][0]==0:
+        print(x,y)
+        surface0_2.append(i)
+    if x[0][0]==length:
+        print(x,y)
+        surface5_2.append(i) 
+for i in range(len(surface0_1)):      
+    mdb.models['Model-1'].rootAssembly.Surface(name='LEFT'+str(i), side1Faces=
+    mdb.models['Model-1'].rootAssembly.instances['PHASE-1-1'].faces[surface0_1[i]:surface0_1[i]+1])
+for i in range(len(surface0_2)):      
+    mdb.models['Model-1'].rootAssembly.Surface(name='LEFT'+str(i+len(surface0_1)), side1Faces=
+    mdb.models['Model-1'].rootAssembly.instances['PHASE-2-1'].faces[surface0_2[i]:surface0_2[i]+1])
+
+for i in range(len(surface5_1)):      
+    mdb.models['Model-1'].rootAssembly.Surface(name='RIGHT'+str(i), side1Faces=
+    mdb.models['Model-1'].rootAssembly.instances['PHASE-1-1'].faces[surface5_1[i]:surface5_1[i]+1])
+for i in range(len(surface5_2)):      
+    mdb.models['Model-1'].rootAssembly.Surface(name='RIGHT'+str(i+len(surface5_1)), side1Faces=
+    mdb.models['Model-1'].rootAssembly.instances['PHASE-2-1'].faces[surface5_2[i]:surface5_2[i]+1])
+
+mdb.models['Model-1'].rootAssembly.SurfaceByBoolean(name='Surf_RIGHT_all_1', surfaces=(
+    mdb.models['Model-1'].rootAssembly.surfaces['RIGHT0'], 
+    mdb.models['Model-1'].rootAssembly.surfaces['RIGHT1']))
+for i in range(2,len(surface5_1)+len(surface5_2)):
+    mdb.models['Model-1'].rootAssembly.SurfaceByBoolean(name='Surf_RIGHT_all_'+str(i), surfaces=(
+    mdb.models['Model-1'].rootAssembly.surfaces['Surf_RIGHT_all_'+str(i-1)], 
+    mdb.models['Model-1'].rootAssembly.surfaces['RIGHT'+str(i)]))
+for i in range(1,len(surface5_1)+len(surface5_2)-1):
+    del mdb.models['Model-1'].rootAssembly.surfaces['Surf_RIGHT_all_'+str(i)]
+
+
+mdb.models['Model-1'].rootAssembly.SurfaceByBoolean(name='Surf_LEFT_all_1', surfaces=(
+    mdb.models['Model-1'].rootAssembly.surfaces['LEFT0'], 
+    mdb.models['Model-1'].rootAssembly.surfaces['LEFT1']))
+for i in range(2,len(surface0_1)+len(surface0_2)):
+    mdb.models['Model-1'].rootAssembly.SurfaceByBoolean(name='Surf_LEFT_all_'+str(i), surfaces=(
+    mdb.models['Model-1'].rootAssembly.surfaces['Surf_LEFT_all_'+str(i-1)], 
+    mdb.models['Model-1'].rootAssembly.surfaces['LEFT'+str(i)]))
+
+for i in range(1,len(surface0_1)+len(surface0_2)-1):
+    del mdb.models['Model-1'].rootAssembly.surfaces['Surf_LEFT_all_'+str(i)]
+    
+for i in range(len(surface0_1)+len(surface0_2)):
+    del mdb.models['Model-1'].rootAssembly.surfaces['LEFT'+str(i)] 
+for i in range(len(surface5_1)+len(surface5_2)):
+    del mdb.models['Model-1'].rootAssembly.surfaces['RIGHT'+str(i)]  
+#mdb.models['Model-1'].Material(name='Material-4')
+#mdb.models['Model-1'].materials['Material-4'].Conductivity(table=((202.0, 0.0, 
+#    202.0, 0.0, 0.0, 202.0), ), type=ANISOTROPIC)  
