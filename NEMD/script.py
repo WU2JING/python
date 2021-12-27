@@ -11,12 +11,6 @@ lx    = 15.027857        # [Angstrom]
 ly    = 15.027857            # [Angstrom]
 area  = lx*ly*A**2     # m^2 
 num=21
-file1=open("./T-X.txt",'r')
-file2=open("./fnvt.txt",'r')
-file3=open("./Q.txt",'w')
-file4=open("./TimeStep.txt",'w')
-#file5=open("./jluxleft.txt",'w')
-#file6=open("./jluxright.txt",'w')
 n=-2
 a=[]
 b=[]
@@ -40,12 +34,6 @@ while True:
         file4.write('\n')
        # file5.write(str( y * 0.0005))
        # file5.write('\n')
-#print(n)
-file3.close()
-file4.close()
-file2.close()
-#file5.close()
-#file6.close()
 m=-2
 sum=[0.0 for i in range(num)]
 while True:
